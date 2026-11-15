@@ -1,50 +1,54 @@
-name: Build Mountain Gram (debug)
+name: Mountain Gram CI
 
 on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout с субмодулями
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - name: Настройка JDK 17
+        uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
+          java-version: '17'
+          distribution: 'temurin'
 
-      - name: Setup Android SDK
+      - name: Настройка Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Установка NDK 27.2.12479018
         run: |
-          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
-          echo "y" | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" > /dev/null
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
 
-      - name: Install NDK from build.gradle
+      - name: Запись API ключей из секретов
         run: |
-          NDK=$(grep -rhoE 'ndkVersion\s*"?[0-9.]+' --include=build.gradle . | head -1 | grep -oE '[0-9.]+$')
-          echo "NDK version: $NDK"
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "ndk;$NDK" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1"
+          sed -i "s/APP_ID = 0/APP_ID = ${{ secrets.TELEGRAM_API_ID }}/" \
+            TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          sed -i "s/APP_HASH = \"\"/APP_HASH = \"${{ secrets.TELEGRAM_API_HASH }}\"/" \
+            TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
 
-      - name: Inject API keys
-        run: |
-          F=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
-          sed -i -E 's/(APP_ID\s*=\s*)[0-9]+;/\1${{ secrets.TG_API_ID }};/' $F
-          sed -i -E 's/(APP_HASH\s*=\s*")[^"]*"/\1${{ secrets.TG_API_HASH }}"/' $F
+      - name: Права на gradlew
+        run: chmod +x gradlew
 
-      - name: Rename app (package + title)
-        run: |
-          sed -i 's/org\.telegram\.messenger\.web/org.mountaingram.messenger/g' TMessagesProj_App/build.gradle
-          grep -rl '<string name="AppName">' TMessagesProj/src/main/res/values* | xargs sed -i -E 's#(<string name="AppName">)[^<]*#\1Mountain Gram#'
+      - name: Сборка debug APK
+        run: ./gradlew :TMessagesProj_App:assembleAfatDebug
 
-      - name: Build debug APK
-        run: |
-          chmod +x gradlew
-          ./gradlew :TMessagesProj_App:assembleAfatDebug --no-daemon
-
-      - uses: actions/upload-artifact@v4
+      - name: Загрузка артефакта
+        uses: actions/upload-artifact@v4
         with:
-          name: MountainGram-debug-APK
+          name: MountainGram-debug
           path: TMessagesProj_App/build/outputs/apk/**/*.apk
+          retention-days: 7
